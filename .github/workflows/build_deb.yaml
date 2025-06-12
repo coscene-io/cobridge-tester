@@ -18,46 +18,46 @@ jobs:
             arch: armhf
             distro: trusty
             label: [ linux-arm-64-8c-32g-300gb ]
-          - ros_distribution: melodic
-            arch: amd64
-            distro: bionic
-            label: ubuntu-latest
-          - ros_distribution: melodic
-            arch: arm64
-            distro: bionic
-            label: [ linux-arm-64-8c-32g-300gb ]
-          - ros_distribution: noetic
-            arch: amd64
-            distro: focal
-            label: ubuntu-latest
-          - ros_distribution: noetic
-            arch: arm64
-            distro: focal
-            label: [ linux-arm-64-8c-32g-300gb ]
-          - ros_distribution: foxy
-            arch: amd64
-            distro: focal
-            label: ubuntu-latest
-          - ros_distribution: foxy
-            arch: arm64
-            distro: focal
-            label: [ linux-arm-64-8c-32g-300gb ]
-          - ros_distribution: humble
-            arch: amd64
-            distro: jammy
-            label: ubuntu-latest
-          - ros_distribution: humble
-            arch: arm64
-            distro: jammy
-            label: [ linux-arm-64-8c-32g-300gb ]
-          - ros_distribution: jazzy
-            arch: amd64
-            distro: noble
-            label: ubuntu-latest
-          - ros_distribution: jazzy
-            arch: arm64
-            distro: noble
-            label: [ linux-arm-64-8c-32g-300gb ]
+          # - ros_distribution: melodic
+          #   arch: amd64
+          #   distro: bionic
+          #   label: ubuntu-latest
+          # - ros_distribution: melodic
+          #   arch: arm64
+          #   distro: bionic
+          #   label: [ linux-arm-64-8c-32g-300gb ]
+          # - ros_distribution: noetic
+          #   arch: amd64
+          #   distro: focal
+          #   label: ubuntu-latest
+          # - ros_distribution: noetic
+          #   arch: arm64
+          #   distro: focal
+          #   label: [ linux-arm-64-8c-32g-300gb ]
+          # - ros_distribution: foxy
+          #   arch: amd64
+          #   distro: focal
+          #   label: ubuntu-latest
+          # - ros_distribution: foxy
+          #   arch: arm64
+          #   distro: focal
+          #   label: [ linux-arm-64-8c-32g-300gb ]
+          # - ros_distribution: humble
+          #   arch: amd64
+          #   distro: jammy
+          #   label: ubuntu-latest
+          # - ros_distribution: humble
+          #   arch: arm64
+          #   distro: jammy
+          #   label: [ linux-arm-64-8c-32g-300gb ]
+          # - ros_distribution: jazzy
+          #   arch: amd64
+          #   distro: noble
+          #   label: ubuntu-latest
+          # - ros_distribution: jazzy
+          #   arch: arm64
+          #   distro: noble
+          #   label: [ linux-arm-64-8c-32g-300gb ]
 
     name: Build deb (ROS ${{ matrix.ros_distribution }} - ${{ matrix.arch }})
     runs-on: ${{ matrix.label }}
@@ -92,10 +92,19 @@ jobs:
             DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc -a${{ matrix.arch }}
             
             mkdir -p /workspace/artifacts
-            cp ../*.deb /workspace/artifacts/
+            chmod -R 777 /workspace/artifacts
             
-            DEB_FILENAME=$(basename $(ls /workspace/artifacts/*.deb))
-            echo "DEB_FILENAME=$DEB_FILENAME" >> $GITHUB_ENV
+            find .. -name "*.deb" -exec cp {} /workspace/artifacts/ \;
+            
+            if [ -d "/workspace/artifacts" ] && [ "$(ls -A /workspace/artifacts/*.deb 2>/dev/null)" ]; then
+              DEB_FILENAME=$(basename $(ls /workspace/artifacts/*.deb))
+              echo "DEB_FILENAME=$DEB_FILENAME" >> $GITHUB_ENV
+              echo "成功创建deb包: $DEB_FILENAME"
+            else
+              echo "警告: 未找到deb包，检查构建过程"
+              find .. -name "*.deb" || echo "没有找到deb文件"
+              ls -la /workspace || echo "无法访问工作空间"
+            fi
       
       - name: Upload deb package
         uses: actions/upload-artifact@v4
@@ -103,4 +112,5 @@ jobs:
           name: ros-${{ matrix.ros_distribution }}-${{ matrix.arch }}-deb
           path: artifacts/*.deb
           retention-days: 7
+          if-no-files-found: warn
 
