@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Launch the tester node -->
+  <node name="tester_node" pkg="cobridge_tester" type="tester_node" output="screen">
+    <!-- <param name="param_name" value="param_value" /> -->
+  </node>
+</launch> 

@@ -1,0 +1,211 @@
+name: build deb
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build-deb-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ros_distribution: indigo
+            arch: amd64
+            distro: trusty
+          - ros_distribution: indigo
+            arch: armhf
+            distro: trusty
+            qemu: true
+          - ros_distribution: melodic
+            arch: amd64
+            distro: bionic
+          - ros_distribution: melodic
+            arch: arm64
+            distro: bionic
+            qemu: true
+          - ros_distribution: noetic
+            arch: amd64
+            distro: focal
+          - ros_distribution: noetic
+            arch: arm64
+            distro: focal
+            qemu: true
+          - ros_distribution: foxy
+            arch: amd64
+            distro: focal
+          - ros_distribution: foxy
+            arch: arm64
+            distro: focal
+            qemu: true
+          - ros_distribution: humble
+            arch: amd64
+            distro: jammy
+          - ros_distribution: humble
+            arch: arm64
+            distro: jammy
+            qemu: true
+          - ros_distribution: jazzy
+            arch: amd64
+            distro: noble
+          - ros_distribution: jazzy
+            arch: arm64
+            distro: noble
+            qemu: true
+
+    name: Build deb (ROS ${{ matrix.ros_distribution }} - ${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    outputs:
+      deb_filename: ${{ steps.package_info.outputs.deb_filename }}
+      build_status: ${{ steps.build_status.outputs.status }}
+    
+    steps:
+      - name: Checkout code
+        if: matrix.ros_distribution != 'indigo' && matrix.ros_distribution != 'melodic'
+        uses: actions/checkout@v4
+
+      - name: Checkout code (indigo/melodic)
+        if: matrix.ros_distribution == 'indigo' || matrix.ros_distribution == 'melodic'
+        shell: bash
+        run: |
+          echo "current sha: ${{ github.sha}}, current ref: ${{ github.ref }}"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          
+          git clone https://github.com/${{ github.repository }}.git .
+          
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "PR number: ${{ github.event.pull_request.number }}"
+            git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-branch
+            git checkout pr-branch
+          else
+            git checkout ${{ github.sha }}
+          fi
+          
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64,linux/arm/v7
+
+      - name: Set up Docker Buildx
+        if: matrix.qemu
+        uses: docker/setup-buildx-action@v3
+
+      - name: Update package version
+        if: github.event_name == 'release'
+        run: |
+          VERSION=$(echo $GITHUB_REF | sed 's#refs/tags/v##')
+          echo "Version: $VERSION"
+          echo "GITHUB_REF: $GITHUB_REF"
+          sed -i "s#<version>.*</version>#<version>$VERSION</version>#" ./package.xml
+
+      - name: Build deb package (amd64)
+        id: build_deb_amd64
+        if: matrix.arch == 'amd64'
+        run: |
+          set +e
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e DEB_BUILD_OPTIONS=nocheck \
+            -e DH_ALWAYS_EXCLUDE= \
+            cobridge/ros-${{ matrix.ros_distribution }}:latest \
+            bash -c "
+              rosdep update --rosdistro=${{ matrix.ros_distribution }} --include-eol-distros && \
+              bloom-generate rosdebian --ros-distro ${{ matrix.ros_distribution }} && \
+              dpkg-buildpackage -b -us -uc -a${{ matrix.arch }} && \
+              mkdir -p /workspace/deb-packages && \
+              cp ../*.deb /workspace/deb-packages/
+            "
+          BUILD_RESULT=$?
+          if [ $BUILD_RESULT -ne 0 ]; then
+            echo "Build failed with exit code $BUILD_RESULT"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build deb package (arm64)
+        id: build_deb_arm64
+        if: matrix.arch == 'arm64'
+        run: |
+          set +e
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e DEB_BUILD_OPTIONS=nocheck \
+            -e DH_ALWAYS_EXCLUDE= \
+            cobridge/ros-${{ matrix.ros_distribution }}:latest \
+            bash -c "
+              rosdep update --rosdistro=${{ matrix.ros_distribution }} --include-eol-distros && \
+              bloom-generate rosdebian --ros-distro ${{ matrix.ros_distribution }} && \
+              dpkg-buildpackage -b -us -uc -a${{ matrix.arch }} && \
+              mkdir -p /workspace/deb-packages && \
+              cp ../*.deb /workspace/deb-packages/
+            "
+          BUILD_RESULT=$?
+          if [ $BUILD_RESULT -ne 0 ]; then
+            echo "Build failed with exit code $BUILD_RESULT"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build deb package (armhf)
+        id: build_deb_armhf
+        if: matrix.arch == 'armhf'
+        run: |
+          set +e
+          docker run --rm --platform linux/arm/v7 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e DEB_BUILD_OPTIONS=nocheck \
+            -e DH_ALWAYS_EXCLUDE= \
+            cobridge/ros-${{ matrix.ros_distribution }}:latest \
+            bash -c "
+              rosdep update --rosdistro=${{ matrix.ros_distribution }} --include-eol-distros && \
+              bloom-generate rosdebian --ros-distro ${{ matrix.ros_distribution }} && \
+              dpkg-buildpackage -b -us -uc -a${{ matrix.arch }} && \
+              mkdir -p /workspace/deb-packages && \
+              cp ../*.deb /workspace/deb-packages/
+            "
+          BUILD_RESULT=$?
+          if [ $BUILD_RESULT -ne 0 ]; then
+            echo "Build failed with exit code $BUILD_RESULT"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set build status
+        id: build_status
+        run: |
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            echo "status=${{ steps.build_deb_amd64.outputs.status || 'unknown' }}" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+            echo "status=${{ steps.build_deb_arm64.outputs.status || 'unknown' }}" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.arch }}" = "armhf" ]; then
+            echo "status=${{ steps.build_deb_armhf.outputs.status || 'unknown' }}" >> $GITHUB_OUTPUT
+          else
+            echo "status=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get package info
+        id: package_info
+        run: |
+          DEB_FILENAME=$(basename $(ls deb-packages/*.deb 2>/dev/null || echo ""))
+          echo "deb_filename=$DEB_FILENAME" >> $GITHUB_OUTPUT
+          download_url="https://download.coscene.cn/cobridge_test/${DEB_FILENAME}"
+          echo "download_url=$download_url" >> $GITHUB_OUTPUT
+          echo "File: $DEB_FILENAME, URL: $download_url"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_info.outputs.deb_filename || format('ros-{0}-{1}-deb', matrix.ros_distribution, matrix.arch) }}
+          path: deb-packages/*.deb
+          if-no-files-found: warn
