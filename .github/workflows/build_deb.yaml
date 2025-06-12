@@ -93,6 +93,8 @@ jobs:
             
             mkdir -p /workspace/artifacts
             chmod -R 777 /workspace/artifacts
+            echo "list directory: /workspace/artifacts"
+            ls -larth /workspace/artifacts
             
             find .. -name "*.deb" -exec cp {} /workspace/artifacts/ \;
             
