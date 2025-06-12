@@ -92,22 +92,20 @@ jobs:
             DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -us -uc -a${{ matrix.arch }}
             
             mkdir -p /workspace/artifacts
-            chmod -R 777 /workspace/artifacts
             echo "list directory: /workspace/artifacts"
             ls -larth /workspace/artifacts
             echo "list directory: .."
             ls -larth ..
-            
-            find .. -name "*.deb" -exec cp {} /workspace/artifacts/ \;
-            
+            cp ../*.deb /workspace/artifacts/.
+                        
             if [ -d "/workspace/artifacts" ] && [ "$(ls -A /workspace/artifacts/*.deb 2>/dev/null)" ]; then
               DEB_FILENAME=$(basename $(ls /workspace/artifacts/*.deb))
               echo "DEB_FILENAME=$DEB_FILENAME" >> $GITHUB_ENV
-              echo "成功创建deb包: $DEB_FILENAME"
+              echo "create deb package success: $DEB_FILENAME"
             else
-              echo "警告: 未找到deb包，检查构建过程"
-              find .. -name "*.deb" || echo "没有找到deb文件"
-              ls -la /workspace || echo "无法访问工作空间"
+              echo "warning: can not find deb packages"
+              find .. -name "*.deb" || echo "can not find deb packages"
+              ls -la /workspace || echo "can not switch into workspace"
             fi
       
       - name: Upload deb package
