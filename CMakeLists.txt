@@ -4,7 +4,6 @@ else()
     cmake_minimum_required(VERSION 3.10.2)
 endif()
 
-# 禁用测试
 option(CATKIN_ENABLE_TESTING "Disable testing" OFF)
 
 if(POLICY CMP0048)
@@ -77,6 +76,7 @@ if(NOT ROS1_FOUND EQUAL -1)
         add_service_files(
                 FILES
                 Common.srv
+                NewlineCR.srv
                 NewlineCRLF.srv
                 NoRequest.srv
                 NoResponse.srv
@@ -105,6 +105,7 @@ elseif(NOT ROS2_FOUND EQUAL -1)
 
         rosidl_generate_interfaces(${PROJECT_NAME}
                 "srv/Common.srv"
+                "srv/NewlineCR.srv"
                 "srv/NewlineCRLF.srv"
                 "srv/NoRequest.srv"
                 "srv/NoResponse.srv"
