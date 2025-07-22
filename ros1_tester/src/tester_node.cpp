@@ -1,6 +1,7 @@
 //
 // Created by fei on 25-6-10.
 //
+#include <chrono>
 
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
@@ -86,9 +87,7 @@ private:
         std::vector<uchar> buffer;
         cv::imencode(".jpg", image, buffer);
         compressed_msg->data.assign(buffer.begin(), buffer.end());
-        compressed_pub_->publish(*compressed_msg);
-        RCLCPP_DEBUG(this->get_logger(), "Published image frame %d", frame_count);
-        
+        compressed_pub_.publish(*compressed_msg);
         ROS_DEBUG("Published image frame %d", frame_count);
     }
 
