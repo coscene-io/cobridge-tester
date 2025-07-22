@@ -18,6 +18,7 @@
 
 #include "cobridge_tester/srv/common.hpp"
 #include "cobridge_tester/srv/newline_crlf.hpp"
+#include "cobridge_tester/srv/newline_cr.hpp"
 #include "cobridge_tester/srv/no_request.hpp"
 #include "cobridge_tester/srv/no_response.hpp"
 #include "cobridge_tester/srv/null.hpp"
@@ -29,39 +30,42 @@ class TesterNode : public rclcpp::Node
 public:
     TesterNode() : Node("cobridge_tester_node")
     {
-        // 初始化发布者和订阅者
-        image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/camera_image", 10);
+        image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/camera/raw_image", 10);
+        compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("/camera/compressed_image", 10);
         remote_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/remote_msgs", 10, 
-            std::bind(&TesterNode::remoteCallback, this, std::placeholders::_1));
-        
-        // 初始化服务
+            std::bind(&TesterNode::remote_callback, this, std::placeholders::_1));
+
         common_srv_ = this->create_service<cobridge_tester::srv::Common>(
             "/common", 
-            std::bind(&TesterNode::commonCallback, this, 
+            std::bind(&TesterNode::common_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
         
         no_request_srv_ = this->create_service<cobridge_tester::srv::NoRequest>(
             "/no_request", 
-            std::bind(&TesterNode::noRequestCallback, this, 
+            std::bind(&TesterNode::no_request_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
         
         no_response_srv_ = this->create_service<cobridge_tester::srv::NoResponse>(
             "/no_response", 
-            std::bind(&TesterNode::noResponseCallback, this, 
+            std::bind(&TesterNode::no_response_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
         
         null_srv_ = this->create_service<cobridge_tester::srv::Null>(
             "/null_srv", 
-            std::bind(&TesterNode::nullCallback, this, 
+            std::bind(&TesterNode::null_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
         
         newline_crlf_srv_ = this->create_service<cobridge_tester::srv::NewlineCRLF>(
             "/newline_crlf", 
-            std::bind(&TesterNode::newlineCrlfCallback, this, 
+            std::bind(&TesterNode::newline_CRLF_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
-        
-        // 创建定时器，定期发布图像
+
+        newline_cr_srv_ = this->create_service<cobridge_tester::srv::NewlineCR>(
+            "/newline_cr",
+            std::bind(&TesterNode::newline_CR_callback, this,
+                      std::placeholders::_1, std::placeholders::_2));
+
         timer_ = this->create_wall_timer(100ms, std::bind(&TesterNode::publishImage, this));
         
         RCLCPP_INFO(this->get_logger(), "Tester node initialized with publisher, subscriber and 5 services");
@@ -69,6 +73,7 @@ public:
 
 private:
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_pub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr remote_sub_;
     
     rclcpp::Service<cobridge_tester::srv::Common>::SharedPtr common_srv_;
@@ -76,6 +81,7 @@ private:
     rclcpp::Service<cobridge_tester::srv::NoResponse>::SharedPtr no_response_srv_;
     rclcpp::Service<cobridge_tester::srv::Null>::SharedPtr null_srv_;
     rclcpp::Service<cobridge_tester::srv::NewlineCRLF>::SharedPtr newline_crlf_srv_;
+    rclcpp::Service<cobridge_tester::srv::NewlineCR>::SharedPtr newline_cr_srv_;
     
     rclcpp::TimerBase::SharedPtr timer_;
 
@@ -84,27 +90,28 @@ private:
     int32_t remote_msgs_draw_count{100};
     int32_t node_status_draw_count{100};
 
-    // 发布图像的回调函数
     void publishImage()
     {
-        // 创建一个简单的彩色图像
         cv::Mat image(1080, 1920, CV_8UC3, cv::Scalar(0, 0, 0));
-        
-        // 在图像上绘制一些内容
+
         static int frame_count = 0;
         frame_count++;
-        
-        // 添加一些动态内容
+
         cv::putText(image, "ROS2 Test Image", cv::Point(50, 150),
                    cv::FONT_HERSHEY_SIMPLEX, 3.0, cv::Scalar(255, 255, 255), 2);
         
         cv::putText(image, "Frame: " + std::to_string(frame_count), 
                    cv::Point(50, 250), cv::FONT_HERSHEY_SIMPLEX,
                    2, cv::Scalar(0, 255, 0), 2);
+
+        auto now = std::chrono::system_clock::now();
+        std::string time_str = std::to_string(now.time_since_epoch().count());
+        auto time_t = std::chrono::system_clock::to_time_t(now);
         
-        // 添加当前时间戳
-        auto now = this->now();
-        std::string time_str = std::to_string(now.seconds());
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&time_t), " [%Y-%m-%d %H:%M:%S]");
+        time_str += ss.str();
+        
         cv::putText(image, "Time: " + time_str, cv::Point(50, 350),
                    cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 0, 255), 2);
 
@@ -119,28 +126,33 @@ private:
                 cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 255, 255),  2);
             node_status_draw_count++;
         }
-        
-        // 转换为ROS图像消息
+
         auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", image).toImageMsg();
-        msg->header.stamp = now;
+        msg->header.stamp = this->now();
         msg->header.frame_id = "camera";
-        
-        // 发布图像
+
         image_pub_->publish(*msg);
-        
+
+        auto compressed_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
+        compressed_msg->header.stamp = this->get_clock()->now();
+        compressed_msg->header.frame_id = "camera";
+        compressed_msg->format = "jpeg";
+
+        std::vector<uchar> buffer;
+        cv::imencode(".jpg", image, buffer);
+        compressed_msg->data.assign(buffer.begin(), buffer.end());
+        compressed_pub_->publish(*compressed_msg);
         RCLCPP_DEBUG(this->get_logger(), "Published image frame %d", frame_count);
     }
-    
-    // 接收远程消息的回调函数
-    void remoteCallback(const std_msgs::msg::String::SharedPtr msg)
+
+    void remote_callback(const std_msgs::msg::String::SharedPtr msg)
     {
         RCLCPP_INFO(this->get_logger(), "Received remote message: %s", msg->data.c_str());
         remote_msgs_ = msg->data;
         remote_msgs_draw_count = 0;
     }
-    
-    // Common服务的回调函数
-    void commonCallback(
+
+    void common_callback(
         const std::shared_ptr<cobridge_tester::srv::Common::Request> request,
         std::shared_ptr<cobridge_tester::srv::Common::Response> response)
     {
@@ -150,9 +162,8 @@ private:
         response->success = true;
         response->data = "Response to: " + request->data;
     }
-    
-    // No_Request服务的回调函数
-    void noRequestCallback(
+
+    void no_request_callback(
         const std::shared_ptr<cobridge_tester::srv::NoRequest::Request> request,
         std::shared_ptr<cobridge_tester::srv::NoRequest::Response> response)
     {
@@ -162,9 +173,8 @@ private:
         response->success = true;
         response->message = "No request service processed successfully";
     }
-    
-    // No_Response服务的回调函数
-    void noResponseCallback(
+
+    void no_response_callback(
         const std::shared_ptr<cobridge_tester::srv::NoResponse::Request> request,
         std::shared_ptr<cobridge_tester::srv::NoResponse::Response> response)
     {
@@ -172,9 +182,8 @@ private:
         node_status_draw_count = 0;
         RCLCPP_INFO(this->get_logger(), "%s", node_status_.c_str());
     }
-    
-    // Null服务的回调函数
-    void nullCallback(
+
+    void null_callback(
         const std::shared_ptr<cobridge_tester::srv::Null::Request> request,
         std::shared_ptr<cobridge_tester::srv::Null::Response> response)
     {
@@ -182,21 +191,39 @@ private:
         node_status_draw_count = 0;
         RCLCPP_INFO(this->get_logger(), "%s", node_status_.c_str());
     }
-    
-    // Newline_CRLF服务的回调函数
-    void newlineCrlfCallback(
+
+    void newline_CRLF_callback(
         const std::shared_ptr<cobridge_tester::srv::NewlineCRLF::Request> request,
         std::shared_ptr<cobridge_tester::srv::NewlineCRLF::Response> response)
     {
         node_status_ = "/newline_crlf service called";
         node_status_draw_count = 0;
         RCLCPP_INFO(this->get_logger(), "%s", node_status_.c_str());
-        
-        // 填充响应数据
+
         response->header.stamp = this->now();
         response->header.frame_id = "cobridge_tester";
         
         response->name = "CRLF测试设备";
+        response->serial_number = "SN12345678";
+        response->firmware_version = "v1.2.3";
+        response->supported_min_sdk_version = "v1.0.0";
+        response->hardware_version = "HW2.0";
+        response->success = true;
+        response->message = "CRLF服务调用成功";
+    }
+
+    void newline_CR_callback(
+        const std::shared_ptr<cobridge_tester::srv::NewlineCR::Request> request,
+        std::shared_ptr<cobridge_tester::srv::NewlineCR::Response> response)
+    {
+        node_status_ = "/newline_cr service called";
+        node_status_draw_count = 0;
+        RCLCPP_INFO(this->get_logger(), "%s", node_status_.c_str());
+
+        response->header.stamp = this->now();
+        response->header.frame_id = "cobridge_tester";
+
+        response->name = "CR测试设备";
         response->serial_number = "SN12345678";
         response->firmware_version = "v1.2.3";
         response->supported_min_sdk_version = "v1.0.0";
