@@ -4,6 +4,11 @@
 
 #include <memory>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <ratio>
+#include <iomanip>
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -30,8 +35,11 @@ class TesterNode : public rclcpp::Node
 public:
     TesterNode() : Node("cobridge_tester_node")
     {
-        image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/camera/raw_image", 10);
-        compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("/camera/compressed_image", 10);
+        rclcpp::QoS qos{rclcpp::KeepLast(10)};
+        qos.reliable();
+        image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/camera/raw_image", qos);
+        compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("/camera/compressed_image", qos);
+
         remote_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/remote_msgs", 10, 
             std::bind(&TesterNode::remote_callback, this, std::placeholders::_1));
@@ -66,9 +74,29 @@ public:
             std::bind(&TesterNode::newline_CR_callback, this,
                       std::placeholders::_1, std::placeholders::_2));
 
-        timer_ = this->create_wall_timer(100ms, std::bind(&TesterNode::publishImage, this));
+        running_ = true;
+        image_thread_ = std::thread(&TesterNode::imagePublishLoop, this);
         
         RCLCPP_INFO(this->get_logger(), "Tester node initialized with publisher, subscriber and 5 services");
+    }
+
+    void setTargetFPS(int fps)
+    {
+        if (fps > 0 && fps <= 120) {
+            target_fps_.store(fps);
+            target_interval_.store(std::chrono::microseconds(1000000 / fps));
+            RCLCPP_INFO(this->get_logger(), "Target FPS set to %d", fps);
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Invalid FPS value: %d, keeping current value", fps);
+        }
+    }
+
+    ~TesterNode()
+    {
+        running_ = false;
+        if (image_thread_.joinable()) {
+            image_thread_.join();
+        }
     }
 
 private:
@@ -82,41 +110,75 @@ private:
     rclcpp::Service<cobridge_tester::srv::Null>::SharedPtr null_srv_;
     rclcpp::Service<cobridge_tester::srv::NewlineCRLF>::SharedPtr newline_crlf_srv_;
     rclcpp::Service<cobridge_tester::srv::NewlineCR>::SharedPtr newline_cr_srv_;
-    
-    rclcpp::TimerBase::SharedPtr timer_;
+
+    std::thread image_thread_;
+    std::atomic<bool> running_;
+    std::atomic<int> target_fps_{30};
+    std::atomic<std::chrono::microseconds> target_interval_{std::chrono::microseconds(33333)};
 
     std::string remote_msgs_;
     std::string node_status_;
     int32_t remote_msgs_draw_count{100};
     int32_t node_status_draw_count{100};
 
+    void imagePublishLoop()
+    {
+        while (running_) {
+            auto start_time = std::chrono::high_resolution_clock::now();
+            
+            publishImage();
+            
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto processing_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+            
+            auto current_interval = target_interval_.load();
+            auto sleep_time = current_interval - processing_time;
+
+            if (sleep_time.count() <= 0) {
+            RCLCPP_INFO(this->get_logger(),
+                "publishImage took %ld us, exceeding target interval of %ld us for %d fps",
+                processing_time.count(), current_interval.count(), target_fps_.load());
+            }else{
+                std::this_thread::sleep_for(sleep_time);
+            }
+        }
+    }
+
     void publishImage()
     {
-        cv::Mat image(1080, 1920, CV_8UC3, cv::Scalar(0, 0, 0));
+        auto now = std::chrono::system_clock::now();
+        cv::Mat image(720, 1280, CV_8UC3, cv::Scalar(0, 0, 0));
 
         static int frame_count = 0;
         frame_count++;
 
-        cv::putText(image, "ROS2 Test Image", cv::Point(50, 150),
+        cv::putText(image, "ROS2 Test Node", cv::Point(50, 100),
                    cv::FONT_HERSHEY_SIMPLEX, 3.0, cv::Scalar(255, 255, 255), 2);
         
         cv::putText(image, "Frame: " + std::to_string(frame_count), 
-                   cv::Point(50, 250), cv::FONT_HERSHEY_SIMPLEX,
+                   cv::Point(50, 200), cv::FONT_HERSHEY_SIMPLEX,
                    2, cv::Scalar(0, 255, 0), 2);
 
-        auto now = std::chrono::system_clock::now();
-        std::string time_str = std::to_string(now.time_since_epoch().count());
+        std::string timestamp_str = std::to_string(now.time_since_epoch().count());
+
         auto time_t = std::chrono::system_clock::to_time_t(now);
+
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
         
         std::stringstream ss;
-        ss << std::put_time(std::localtime(&time_t), " [%Y-%m-%d %H:%M:%S]");
-        time_str += ss.str();
+        ss << "Time: "<< std::put_time(std::localtime(&time_t), "[%Y-%m-%d %H:%M:%S.");
+        ss << std::setfill('0') << std::setw(3) << ms.count() << "]";
+        std::string time_str = ss.str();
         
-        cv::putText(image, "Time: " + time_str, cv::Point(50, 350),
+        cv::putText(image, "Timestamp: " + timestamp_str, cv::Point(50, 300),
+        cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 0, 255), 2);
+
+        cv::putText(image, time_str, cv::Point(50, 400),
                    cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 0, 255), 2);
 
         if (remote_msgs_draw_count < 20) {
-            cv::putText(image, remote_msgs_, cv::Point(50, 450),
+            cv::putText(image, remote_msgs_, cv::Point(50, 550),
                 cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(255, 0, 0),  2);
             remote_msgs_draw_count++;
         }
